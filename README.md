@@ -46,25 +46,6 @@ RestaurantPro is a comprehensive restaurant management system designed to stream
 4. Set up appropriate file permissions for the project directory
 5. Access the application through your web browser
 
-## File Structure
-
-```
-restaurantpro/
-├── includes/
-│   ├── auth.php          # Authentication functions
-│   ├── sidebar.php       # Navigation sidebar
-│   └── header.php        # Page header
-├── config/
-│   └── db.php            # Database configuration
-├── assets/
-│   └── css/              # Additional stylesheets
-├── bill.php              # Bill generation page
-├── orders.php            # Order management
-├── menu.php              # Menu management
-├── tables.php            # Table management
-└── index.php             # Dashboard homepage
-```
-
 ## Database Schema
 
 The system uses the following main tables:
