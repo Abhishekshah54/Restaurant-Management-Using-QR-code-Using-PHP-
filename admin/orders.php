@@ -4,36 +4,75 @@ require_once '../config/db.php';
 
 // Update order status via AJAX
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    header('Content-Type: application/json; charset=utf-8');
+    
     if (isset($_POST['update_status']) && isset($_POST['order_id']) && isset($_POST['status'])) {
-        $stmt = $pdo->prepare("UPDATE orders SET status = ? WHERE id = ? AND restaurant_id = ?");
-        $success = $stmt->execute([$_POST['status'], $_POST['order_id'], $_SESSION['user_id']]);
-        
-        // Return JSON response for AJAX
-        if ($success) {
-            echo json_encode(['success' => true, 'message' => 'Status updated successfully']);
-        } else {
-            echo json_encode(['success' => false, 'message' => 'Failed to update status']);
+        $status = trim($_POST['status']);
+        $orderId = (int)$_POST['order_id'];
+        $restaurantId = $_SESSION['user_id'] ?? 0;
+
+        try {
+            // First try simple update
+            $stmt = $pdo->prepare("UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ? AND restaurant_id = ?");
+            $result = $stmt->execute([$status, $orderId, $restaurantId]);
+
+            if ($result && $stmt->rowCount() > 0) {
+                echo json_encode(['success' => true, 'message' => 'Status updated successfully']);
+                exit;
+            } else {
+                // If failed with Paid, try to add it to enum
+                if (strcasecmp($status, 'Paid') === 0) {
+                    try {
+                        $colStmt = $pdo->prepare("SHOW COLUMNS FROM orders WHERE Field = 'status'");
+                        $colStmt->execute();
+                        $colInfo = $colStmt->fetch(PDO::FETCH_ASSOC);
+
+                        if ($colInfo && strpos($colInfo['Type'], 'enum') !== false) {
+                            $pdo->exec("ALTER TABLE orders MODIFY status ENUM('Pending','Preparing','Ready','Delivered','Paid','Cancelled') NOT NULL DEFAULT 'Pending'");
+                            
+                            $stmt = $pdo->prepare("UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ? AND restaurant_id = ?");
+                            $stmt->execute([$status, $orderId, $restaurantId]);
+                            
+                            echo json_encode(['success' => true, 'message' => 'Status updated successfully']);
+                            exit;
+                        }
+                    } catch (Exception $e) {
+                        // Continue to error response
+                    }
+                }
+                
+                echo json_encode(['success' => false, 'message' => 'No rows updated']);
+                exit;
+            }
+        } catch (PDOException $e) {
+            echo json_encode(['success' => false, 'message' => 'Database error: ' . $e->getMessage()]);
+            exit;
         }
-        exit();
     }
     
     // Delete order via AJAX
     if (isset($_POST['delete_order']) && isset($_POST['order_id'])) {
-        // First delete order items
-        $stmt = $pdo->prepare("DELETE FROM order_items WHERE order_id = ?");
-        $stmt->execute([$_POST['order_id']]);
-        
-        // Then delete the order
-        $stmt = $pdo->prepare("DELETE FROM orders WHERE id = ? AND restaurant_id = ?");
-        $success = $stmt->execute([$_POST['order_id'], $_SESSION['user_id']]);
-        
-        // Return JSON response for AJAX
-        if ($success) {
-            echo json_encode(['success' => true, 'message' => 'Order deleted successfully']);
-        } else {
-            echo json_encode(['success' => false, 'message' => 'Failed to delete order']);
+        $orderId = (int)$_POST['order_id'];
+        $restaurantId = $_SESSION['user_id'] ?? 0;
+
+        try {
+            // First delete order items
+            $stmt = $pdo->prepare("DELETE FROM order_items WHERE order_id = ?");
+            $stmt->execute([$orderId]);
+            
+            // Then delete the order
+            $stmt = $pdo->prepare("DELETE FROM orders WHERE id = ? AND restaurant_id = ?");
+            $result = $stmt->execute([$orderId, $restaurantId]);
+            
+            if ($result) {
+                echo json_encode(['success' => true, 'message' => 'Order deleted successfully']);
+            } else {
+                echo json_encode(['success' => false, 'message' => 'Failed to delete order']);
+            }
+        } catch (PDOException $e) {
+            echo json_encode(['success' => false, 'message' => 'Database error: ' . $e->getMessage()]);
         }
-        exit();
+        exit;
     }
 }
 
@@ -745,22 +784,27 @@ $restaurant_name = $stmt->fetchColumn() ?? 'RestaurantPro';
             selectElement.setAttribute('data-original-status', originalStatus);
             
             // Show loading state
-            const originalHtml = selectElement.innerHTML;
             selectElement.disabled = true;
             
             // Create XMLHttpRequest
-            if (status.length == 0) {
+            if (status.length === 0) {
                 selectElement.disabled = false;
                 return;
-            } else {
-                var xmlhttp = new XMLHttpRequest();
-                xmlhttp.onreadystatechange = function() {
-                    if (this.readyState == 4 && this.status == 200) {
+            }
+
+            var xmlhttp = new XMLHttpRequest();
+            xmlhttp.onreadystatechange = function() {
+                if (this.readyState === 4) {
+                    selectElement.disabled = false;
+
+                    if (this.status === 200) {
                         try {
-                            const data = JSON.parse(this.responseText);
+                            const responseText = this.responseText.trim();
+                            const data = JSON.parse(responseText);
+                            
                             if (data.success) {
                                 // Update UI on success
-                                selectElement.disabled = false;
+                                selectElement.setAttribute('data-original-status', status);
                                 row.setAttribute('data-status', status.toLowerCase());
                                 
                                 // Update statistics
@@ -771,23 +815,35 @@ $restaurant_name = $stmt->fetchColumn() ?? 'RestaurantPro';
                             } else {
                                 // Revert on failure
                                 selectElement.value = originalStatus;
-                                selectElement.disabled = false;
-                                showNotification('Failed to update status: ' + data.message, 'error');
+                                showNotification('Failed to update status: ' + (data.message || 'Unknown error'), 'error');
                             }
                         } catch (e) {
-                            // Revert on error
+                            // Revert on parse error
                             selectElement.value = originalStatus;
-                            selectElement.disabled = false;
-                            showNotification('Error updating status: ' + e.message, 'error');
+                            console.error('Parse error:', e, 'Response:', this.responseText);
+                            showNotification('Error parsing response: ' + e.message, 'error');
                         }
+                    } else {
+                        // Revert on HTTP error
+                        selectElement.value = originalStatus;
+                        console.error('HTTP Error:', this.status, this.responseText);
+                        showNotification('HTTP Error ' + this.status + ': ' + this.statusText, 'error');
                     }
-                };
-                
-                // Send the request
-                xmlhttp.open("POST", "", true);
-                xmlhttp.setRequestHeader("Content-type", "application/x-www-form-urlencoded");
-                xmlhttp.send("update_status=1&order_id=" + orderId + "&status=" + status);
-            }
+                }
+            };
+            
+            xmlhttp.onerror = function() {
+                selectElement.disabled = false;
+                selectElement.value = originalStatus;
+                console.error('Network error');
+                showNotification('Network error occurred', 'error');
+            };
+            
+            // Send the request
+            xmlhttp.open("POST", "", true);
+            xmlhttp.setRequestHeader("Content-type", "application/x-www-form-urlencoded");
+            const sendData = "update_status=1&order_id=" + encodeURIComponent(orderId) + "&status=" + encodeURIComponent(status);
+            xmlhttp.send(sendData);
         }
 
         // Filter functionality
@@ -889,13 +945,14 @@ $restaurant_name = $stmt->fetchColumn() ?? 'RestaurantPro';
                 pending: 0,
                 preparing: 0,
                 ready: 0,
-                delivered: 0,
-                paid: 0
+                delivered: 0
             };
             
             document.querySelectorAll('.data-table tbody tr').forEach(row => {
-                const status = row.getAttribute('data-status');
-                if (statusCounts.hasOwnProperty(status)) {
+                const status = (row.getAttribute('data-status') || '').toLowerCase();
+                if (status === 'paid') {
+                    statusCounts.delivered++;
+                } else if (statusCounts.hasOwnProperty(status)) {
                     statusCounts[status]++;
                 }
             });
@@ -905,7 +962,6 @@ $restaurant_name = $stmt->fetchColumn() ?? 'RestaurantPro';
             document.getElementById('preparing-count').textContent = statusCounts.preparing;
             document.getElementById('ready-count').textContent = statusCounts.ready;
             document.getElementById('delivered-count').textContent = statusCounts.delivered;
-            document.getElementById('paid-count').textContent = statusCounts.paid;
             
             // Highlight the relevant stat card
             const statCards = document.querySelectorAll('.stat-card');
@@ -922,7 +978,7 @@ $restaurant_name = $stmt->fetchColumn() ?? 'RestaurantPro';
                     }, 2000);
                 });
             }, 100);
-        }}
+        }
 
         // Refresh button
         document.getElementById('refreshBtn').addEventListener('click', function() {

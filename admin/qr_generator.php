@@ -13,13 +13,24 @@ function generateQRCode($text, $size = 300) {
 $restaurant_id = $_SESSION['user_id'];
 
 // Detect environment and set appropriate base URL
-$isLocalhost = (strpos($_SERVER['HTTP_HOST'], 'localhost') !== false || $_SERVER['SERVER_ADDR'] === '127.0.0.1');
 $protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https://' : 'http://';
-$base_path = $isLocalhost 
-    ? "/PROJECTSS/PHP_PROJECT/customer/menu.php"
-    : "/customer/menu.php";
+$host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : 'localhost';
 
-$menu_url = $protocol . $_SERVER['HTTP_HOST'] . $base_path . "?restaurant=" . $restaurant_id;
+// Build base path dynamically from current script location
+$scriptName = isset($_SERVER['SCRIPT_NAME']) ? $_SERVER['SCRIPT_NAME'] : '';
+if ($scriptName === '' && isset($_SERVER['REQUEST_URI'])) {
+    $scriptName = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
+}
+$scriptDir = str_replace('\\', '/', dirname($scriptName));
+$scriptDir = rtrim($scriptDir, '/');
+if (substr($scriptDir, -6) === '/admin') {
+    $rootPath = substr($scriptDir, 0, -6);
+} else {
+    $rootPath = $scriptDir;
+}
+$base_path = ($rootPath ? $rootPath : '') . "/customer/menu.php";
+
+$menu_url = $protocol . $host . $base_path . "?restaurant=" . $restaurant_id;
 
 // Create qrcodes directory if it doesn't exist
 $qrCodeDir = "../assets/qrcodes/";
@@ -27,35 +38,38 @@ if (!file_exists($qrCodeDir)) {
     mkdir($qrCodeDir, 0755, true);
 }
 
-// Generate and save main QR code
+// Generate and save main QR code (skip if already exists unless forced)
+$forceRegen = isset($_GET['regen']) && $_GET['regen'] === '1';
 $filename = "restaurant_{$restaurant_id}_qrcode.png";
-$qrCodeImage = generateQRCode($menu_url);
-if ($qrCodeImage) {
-    file_put_contents($qrCodeDir . $filename, $qrCodeImage);
-} else {
-    $error = "Failed to generate QR code";
+$mainPath = $qrCodeDir . $filename;
+if ($forceRegen || !file_exists($mainPath)) {
+    $qrCodeImage = generateQRCode($menu_url);
+    if ($qrCodeImage) {
+        file_put_contents($mainPath, $qrCodeImage);
+    } else {
+        $error = "Failed to generate QR code";
+    }
 }
 
-// Generate individual table QR codes
+// Generate individual table QR codes (skip if already exists unless forced)
 $tableQRCodes = [];
 for ($table_no = 1; $table_no <= 10; $table_no++) {
     $table_url = $menu_url . "&table=" . $table_no;
     $table_filename = "restaurant_{$restaurant_id}_table_{$table_no}_qrcode.png";
-    $tableQRImage = generateQRCode($table_url);
-    if ($tableQRImage) {
-        file_put_contents($qrCodeDir . $table_filename, $tableQRImage);
-        $tableQRCodes[$table_no] = [
-            'filename' => $table_filename,
-            'url' => $table_url,
-            'exists' => true
-        ];
-    } else {
-        $tableQRCodes[$table_no] = [
-            'filename' => $table_filename,
-            'url' => $table_url,
-            'exists' => false
-        ];
+    $tablePath = $qrCodeDir . $table_filename;
+
+    if ($forceRegen || !file_exists($tablePath)) {
+        $tableQRImage = generateQRCode($table_url);
+        if ($tableQRImage) {
+            file_put_contents($tablePath, $tableQRImage);
+        }
     }
+
+    $tableQRCodes[$table_no] = [
+        'filename' => $table_filename,
+        'url' => $table_url,
+        'exists' => file_exists($tablePath)
+    ];
 }
 
 // Get all existing QR codes

@@ -8,9 +8,21 @@ function generateQRCode($text, $size = 300) {
 }
 
 $restaurantId = 8;
-$isLocalhost = true;
-$protocol = 'http://';
-$base_url = $protocol . 'localhost:8000/customer/menu.php';
+$protocol = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https://' : 'http://';
+$host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : 'localhost';
+
+// Allow manual override via environment variable
+$baseOverride = getenv('QR_BASE_URL');
+
+if (!empty($baseOverride)) {
+    $base_url = rtrim($baseOverride, '/');
+} else {
+    // Build base URL from project folder name
+    $projectRoot = realpath(__DIR__ . '/..');
+    $folderName = $projectRoot ? basename($projectRoot) : '';
+    $folderPath = $folderName ? '/' . $folderName : '';
+    $base_url = $protocol . $host . $folderPath . '/customer/menu.php';
+}
 
 $qrCodeDir = "../assets/qrcodes/";
 if (!file_exists($qrCodeDir)) {
