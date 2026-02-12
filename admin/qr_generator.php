@@ -36,6 +36,28 @@ if ($qrCodeImage) {
     $error = "Failed to generate QR code";
 }
 
+// Generate individual table QR codes
+$tableQRCodes = [];
+for ($table_no = 1; $table_no <= 10; $table_no++) {
+    $table_url = $menu_url . "&table=" . $table_no;
+    $table_filename = "restaurant_{$restaurant_id}_table_{$table_no}_qrcode.png";
+    $tableQRImage = generateQRCode($table_url);
+    if ($tableQRImage) {
+        file_put_contents($qrCodeDir . $table_filename, $tableQRImage);
+        $tableQRCodes[$table_no] = [
+            'filename' => $table_filename,
+            'url' => $table_url,
+            'exists' => true
+        ];
+    } else {
+        $tableQRCodes[$table_no] = [
+            'filename' => $table_filename,
+            'url' => $table_url,
+            'exists' => false
+        ];
+    }
+}
+
 // Get all existing QR codes
 $existingQRCodes = glob($qrCodeDir . "*.png");
 ?>
@@ -424,6 +446,98 @@ $existingQRCodes = glob($qrCodeDir . "*.png");
             border: 1px solid var(--light-gray);
         }
 
+        .url-display-small {
+            width: 100%;
+            background: var(--light);
+            padding: 0.5rem;
+            border-radius: var(--border-radius-sm);
+            font-family: monospace;
+            font-size: 0.7rem;
+            word-break: break-all;
+            margin-top: 0.5rem;
+            border: 1px solid var(--light-gray);
+            color: var(--gray);
+        }
+
+        /* QR Card */
+        .qr-card {
+            background: white;
+            border-radius: var(--border-radius);
+            padding: 1.5rem;
+            box-shadow: var(--shadow);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1rem;
+            transition: var(--transition);
+            border: 2px solid transparent;
+            text-align: center;
+        }
+
+        .qr-card:hover {
+            box-shadow: var(--shadow-lg);
+            transform: translateY(-5px);
+            border-color: var(--primary);
+        }
+
+        .qr-card-header {
+            width: 100%;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid var(--light-gray);
+        }
+
+        .qr-card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--secondary);
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .qr-card-image {
+            width: 180px;
+            height: 180px;
+            object-fit: contain;
+            background: var(--light);
+            padding: 0.75rem;
+            border: 2px dashed var(--primary-light);
+            border-radius: var(--border-radius-sm);
+            transition: var(--transition);
+        }
+
+        .qr-card:hover .qr-card-image {
+            transform: scale(1.05);
+        }
+
+        .btn-group-vertical {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            width: 100%;
+        }
+
+        .qr-error {
+            width: 100%;
+            height: 180px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(231, 111, 81, 0.1);
+            border: 2px dashed var(--error);
+            border-radius: var(--border-radius-sm);
+            color: var(--error);
+            font-size: 0.875rem;
+        }
+
+        .qr-error i {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+
         /* Empty State */
         .empty-state {
             display: flex;
@@ -614,6 +728,55 @@ $existingQRCodes = glob($qrCodeDir . "*.png");
                         <p>QR code not generated yet. Please try again.</p>
                     </div>
                 <?php endif; ?>
+            </div>
+        </div>
+
+        <!-- Table QR Codes Card -->
+        <div class="dashboard-card animate-fade-in">
+            <div class="card-header">
+                <h2 class="card-title">
+                    <i class="fas fa-table"></i> Table-Specific QR Codes
+                </h2>
+                <div class="btn-group">
+                    <button onclick="window.print()" class="btn btn-outline">
+                        <i class="fas fa-print"></i> Print All Tables
+                    </button>
+                </div>
+            </div>
+            
+            <p>Print these QR codes and place them on each table. When customers scan a table QR code, their order will be automatically associated with that table number.</p>
+            
+            <div class="qr-grid">
+                <?php for ($table_no = 1; $table_no <= 10; $table_no++): 
+                    $qr = $tableQRCodes[$table_no];
+                    $qrExists = file_exists($qrCodeDir . $qr['filename']);
+                ?>
+                    <div class="qr-card">
+                        <div class="qr-card-header">
+                            <h3 class="qr-card-title">
+                                <i class="fas fa-chair"></i> Table <?php echo $table_no; ?>
+                            </h3>
+                        </div>
+                        
+                        <?php if ($qrExists): ?>
+                            <img src="../assets/qrcodes/<?php echo $qr['filename']; ?>?t=<?php echo time(); ?>" alt="Table <?php echo $table_no; ?> QR Code" class="qr-card-image">
+                            <div class="btn-group-vertical">
+                                <a href="../assets/qrcodes/<?php echo $qr['filename']; ?>" download class="btn btn-primary btn-sm">
+                                    <i class="fas fa-download"></i> Download
+                                </a>
+                                <button onclick="copyToClipboard('table-url-<?php echo $table_no; ?>')" class="btn btn-outline btn-sm">
+                                    <i class="fas fa-link"></i> Copy URL
+                                </button>
+                            </div>
+                            <div class="url-display-small" id="table-url-<?php echo $table_no; ?>"><?php echo htmlspecialchars($qr['url']); ?></div>
+                        <?php else: ?>
+                            <div class="qr-error">
+                                <i class="fas fa-exclamation-triangle"></i>
+                                <p>Failed to generate</p>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                <?php endfor; ?>
             </div>
         </div>
 
