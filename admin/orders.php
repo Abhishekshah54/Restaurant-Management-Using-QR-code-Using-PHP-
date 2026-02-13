@@ -2,40 +2,104 @@
 require_once '../includes/auth.php';
 require_once '../config/db.php';
 
-// Update order status via AJAX
+// Debug: Log POST data
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['update_status']) && isset($_POST['order_id']) && isset($_POST['status'])) {
-        $stmt = $pdo->prepare("UPDATE orders SET status = ? WHERE id = ? AND restaurant_id = ?");
-        $success = $stmt->execute([$_POST['status'], $_POST['order_id'], $_SESSION['user_id']]);
-        
-        // Return JSON response for AJAX
-        if ($success) {
-            echo json_encode(['success' => true, 'message' => 'Status updated successfully']);
-        } else {
-            echo json_encode(['success' => false, 'message' => 'Failed to update status']);
-        }
-        exit();
-    }
+    error_log("POST Data: " . print_r($_POST, true));
+}
+
+// Handle status update via POST
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
+    $orderId = filter_var($_POST['order_id'], FILTER_VALIDATE_INT);
+    $status = trim($_POST['status']);
+    $restaurantId = $_SESSION['user_id'] ?? 0;
     
-    // Delete order via AJAX
-    if (isset($_POST['delete_order']) && isset($_POST['order_id'])) {
-        // First delete order items
-        $stmt = $pdo->prepare("DELETE FROM order_items WHERE order_id = ?");
-        $stmt->execute([$_POST['order_id']]);
-        
-        // Then delete the order
-        $stmt = $pdo->prepare("DELETE FROM orders WHERE id = ? AND restaurant_id = ?");
-        $success = $stmt->execute([$_POST['order_id'], $_SESSION['user_id']]);
-        
-        // Return JSON response for AJAX
-        if ($success) {
-            echo json_encode(['success' => true, 'message' => 'Order deleted successfully']);
-        } else {
-            echo json_encode(['success' => false, 'message' => 'Failed to delete order']);
+    error_log("Attempting to update Order #$orderId to status: $status for restaurant: $restaurantId");
+    
+    // Validate
+    $validStatuses = ['Pending', 'Preparing', 'Ready', 'Delivered', 'Paid', 'Cancelled'];
+    
+    if ($orderId && in_array($status, $validStatuses)) {
+        try {
+            $stmt = $pdo->prepare("UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ? AND restaurant_id = ?");
+            $result = $stmt->execute([$status, $orderId, $restaurantId]);
+            $rowCount = $stmt->rowCount();
+            
+            error_log("Update result: " . ($result ? "SUCCESS" : "FAILED") . ", Rows affected: $rowCount");
+            
+            if ($result) {
+                // Redirect back with success message
+                header("Location: orders.php?updated=1&order_id=$orderId&status=$status");
+                exit;
+            } else {
+                error_log("Update failed - no rows affected");
+                $_SESSION['error'] = 'Failed to update status - order not found';
+            }
+        } catch (PDOException $e) {
+            error_log("Database error: " . $e->getMessage());
+            $_SESSION['error'] = 'Failed to update status: ' . $e->getMessage();
         }
-        exit();
+    } else {
+        error_log("Validation failed - OrderID: $orderId, Status valid: " . (in_array($status, $validStatuses) ? 'YES' : 'NO'));
+        $_SESSION['error'] = 'Invalid order data';
     }
 }
+
+// DELETE ORDER
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_order']) && isset($_POST['order_id'])) {
+    $orderId = filter_var($_POST['order_id'], FILTER_VALIDATE_INT);
+    $restaurantId = $_SESSION['user_id'] ?? 0;
+        
+        if (!$orderId || $orderId <= 0) {
+            echo json_encode([
+                'success' => false, 
+                'message' => 'Invalid order ID'
+            ]);
+            exit;
+        }
+        
+        try {
+            // Start transaction
+            $pdo->beginTransaction();
+            
+            // Delete order items first (foreign key constraint)
+            $stmt = $pdo->prepare("DELETE FROM order_items WHERE order_id = ?");
+            $stmt->execute([$orderId]);
+            
+            // Delete the order
+            $stmt = $pdo->prepare("
+                DELETE FROM orders 
+                WHERE id = ? AND restaurant_id = ?
+            ");
+            $result = $stmt->execute([$orderId, $restaurantId]);
+            
+            // Commit transaction
+            $pdo->commit();
+            
+            if ($result && $stmt->rowCount() > 0) {
+                echo json_encode([
+                    'success' => true, 
+                    'message' => 'Order deleted successfully'
+                ]);
+            } else {
+                echo json_encode([
+                    'success' => false, 
+                    'message' => 'Order not found'
+                ]);
+            }
+            
+        } catch (PDOException $e) {
+            // Rollback on error
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            error_log('Order Delete Error: ' . $e->getMessage());
+            echo json_encode([
+                'success' => false, 
+                'message' => 'Failed to delete order'
+            ]);
+        }
+        exit;
+    }
 
 // Get all orders
 $stmt = $pdo->prepare("
@@ -632,6 +696,21 @@ $restaurant_name = $stmt->fetchColumn() ?? 'RestaurantPro';
                 </div>
             </div>
             
+            <?php if (isset($_GET['updated'])): ?>
+                <div class="success-message" style="padding: 15px 20px; background: #52b788; color: white; border-radius: 8px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+                    <i class="fas fa-check-circle" style="font-size: 20px;"></i>
+                    <span>Order #<?= htmlspecialchars($_GET['order_id'] ?? '') ?> status updated to <strong><?= htmlspecialchars($_GET['status'] ?? '') ?></strong></span>
+                </div>
+            <?php endif; ?>
+            
+            <?php if (isset($_SESSION['error'])): ?>
+                <div class="error-message" style="padding: 15px 20px; background: #e76f51; color: white; border-radius: 8px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+                    <i class="fas fa-exclamation-circle" style="font-size: 20px;"></i>
+                    <span><?= htmlspecialchars($_SESSION['error']) ?></span>
+                </div>
+                <?php unset($_SESSION['error']); ?>
+            <?php endif; ?>
+            
             <div class="card animate-fade-in delay-5">
                 <div class="card-header">
                     <h2 class="card-title">All Orders</h2>
@@ -671,9 +750,11 @@ $restaurant_name = $stmt->fetchColumn() ?? 'RestaurantPro';
                                 </td>
                                 <td><strong>₹<?= number_format($order['total_price'], 2) ?></strong></td>
                                 <td>
-                                    <div class="status-form">
+                                    <!-- Auto-submit form on status change -->
+                                    <form method="POST" action="" style="margin:0;" onchange="this.submit()">
+                                        <input type="hidden" name="update_status" value="1">
                                         <input type="hidden" name="order_id" value="<?= $order['id'] ?>">
-                                        <select name="status" class="status-select" onchange="updateOrderStatus(this, <?= $order['id'] ?>)">
+                                        <select name="status" class="status-select">
                                             <option value="Pending"   <?= $order['status'] == 'Pending' ? 'selected' : '' ?>>Pending</option>
                                             <option value="Preparing" <?= $order['status'] == 'Preparing' ? 'selected' : '' ?>>Preparing</option>
                                             <option value="Ready"     <?= $order['status'] == 'Ready' ? 'selected' : '' ?>>Ready</option>
@@ -681,7 +762,7 @@ $restaurant_name = $stmt->fetchColumn() ?? 'RestaurantPro';
                                             <option value="Paid"      <?= $order['status'] == 'Paid' ? 'selected' : '' ?>>Paid</option>
                                             <option value="Cancelled" <?= $order['status'] == 'Cancelled' ? 'selected' : '' ?>>Cancelled</option>
                                         </select>
-                                    </div>
+                                    </form>
                                 </td>
 
                                 <td>
@@ -735,59 +816,16 @@ $restaurant_name = $stmt->fetchColumn() ?? 'RestaurantPro';
     </div>
 
     <script>
-        // Function to update order status using XMLHttpRequest
-        function updateOrderStatus(selectElement, orderId) {
-            const status = selectElement.value;
-            const row = selectElement.closest('tr');
-            
-            // Store original value for potential rollback
-            const originalStatus = selectElement.getAttribute('data-original-status') || selectElement.value;
-            selectElement.setAttribute('data-original-status', originalStatus);
-            
-            // Show loading state
-            const originalHtml = selectElement.innerHTML;
-            selectElement.disabled = true;
-            
-            // Create XMLHttpRequest
-            if (status.length == 0) {
-                selectElement.disabled = false;
-                return;
-            } else {
-                var xmlhttp = new XMLHttpRequest();
-                xmlhttp.onreadystatechange = function() {
-                    if (this.readyState == 4 && this.status == 200) {
-                        try {
-                            const data = JSON.parse(this.responseText);
-                            if (data.success) {
-                                // Update UI on success
-                                selectElement.disabled = false;
-                                row.setAttribute('data-status', status.toLowerCase());
-                                
-                                // Update statistics
-                                updateStatistics();
-                                
-                                // Show success notification
-                                showNotification('Status updated successfully', 'success');
-                            } else {
-                                // Revert on failure
-                                selectElement.value = originalStatus;
-                                selectElement.disabled = false;
-                                showNotification('Failed to update status: ' + data.message, 'error');
-                            }
-                        } catch (e) {
-                            // Revert on error
-                            selectElement.value = originalStatus;
-                            selectElement.disabled = false;
-                            showNotification('Error updating status: ' + e.message, 'error');
-                        }
-                    }
-                };
-                
-                // Send the request
-                xmlhttp.open("POST", "", true);
-                xmlhttp.setRequestHeader("Content-type", "application/x-www-form-urlencoded");
-                xmlhttp.send("update_status=1&order_id=" + orderId + "&status=" + status);
-            }
+        // Auto-hide success message after 3 seconds
+        const successMsg = document.querySelector('.success-message');
+        if (successMsg) {
+            setTimeout(function() {
+                successMsg.style.transition = 'opacity 0.5s';
+                successMsg.style.opacity = '0';
+                setTimeout(function() {
+                    successMsg.style.display = 'none';
+                }, 500);
+            }, 3000);
         }
 
         // Filter functionality
@@ -889,13 +927,14 @@ $restaurant_name = $stmt->fetchColumn() ?? 'RestaurantPro';
                 pending: 0,
                 preparing: 0,
                 ready: 0,
-                delivered: 0,
-                paid: 0
+                delivered: 0
             };
             
             document.querySelectorAll('.data-table tbody tr').forEach(row => {
-                const status = row.getAttribute('data-status');
-                if (statusCounts.hasOwnProperty(status)) {
+                const status = (row.getAttribute('data-status') || '').toLowerCase();
+                if (status === 'paid') {
+                    statusCounts.delivered++;
+                } else if (statusCounts.hasOwnProperty(status)) {
                     statusCounts[status]++;
                 }
             });
@@ -905,7 +944,6 @@ $restaurant_name = $stmt->fetchColumn() ?? 'RestaurantPro';
             document.getElementById('preparing-count').textContent = statusCounts.preparing;
             document.getElementById('ready-count').textContent = statusCounts.ready;
             document.getElementById('delivered-count').textContent = statusCounts.delivered;
-            document.getElementById('paid-count').textContent = statusCounts.paid;
             
             // Highlight the relevant stat card
             const statCards = document.querySelectorAll('.stat-card');
@@ -922,7 +960,7 @@ $restaurant_name = $stmt->fetchColumn() ?? 'RestaurantPro';
                     }, 2000);
                 });
             }, 100);
-        }}
+        }
 
         // Refresh button
         document.getElementById('refreshBtn').addEventListener('click', function() {

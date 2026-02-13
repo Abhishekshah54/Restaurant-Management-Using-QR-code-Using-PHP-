@@ -1,0 +1,19 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Run PHP dev server",
+			"type": "shell",
+			"command": "php",
+			"args": [
+				"-S",
+				"localhost:8000",
+				"-t",
+				"c:\\Users\\Admin\\Desktop\\PROJECTS\\COLLEGE PROJECTS\\PHP_PROJECT\\SOURCE CODE"
+			],
+			"isBackground": true,
+			"problemMatcher": [],
+			"group": "build"
+		}
+	]
+}

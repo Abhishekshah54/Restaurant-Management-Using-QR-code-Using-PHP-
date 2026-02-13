@@ -2,6 +2,20 @@
 require_once '../includes/auth.php';
 require_once '../config/db.php';
 
+// Handle delete old QR codes request
+if (isset($_GET['delete_old_qrs'])) {
+    $qrCodeDir = "../assets/qrcodes/";
+    $files = glob($qrCodeDir . "*.png");
+    $deleted = 0;
+    foreach ($files as $file) {
+        if (unlink($file)) {
+            $deleted++;
+        }
+    }
+    header("Location: qr_generator.php?deleted_count=$deleted");
+    exit;
+}
+
 // QR code generation function
 function generateQRCode($text, $size = 300) {
     $url = "https://api.qrserver.com/v1/create-qr-code/?size={$size}x{$size}&data=" . urlencode($text);
@@ -12,14 +26,18 @@ function generateQRCode($text, $size = 300) {
 // Get restaurant ID from session
 $restaurant_id = $_SESSION['user_id'];
 
-// Detect environment and set appropriate base URL
-$isLocalhost = (strpos($_SERVER['HTTP_HOST'], 'localhost') !== false || $_SERVER['SERVER_ADDR'] === '127.0.0.1');
-$protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https://' : 'http://';
-$base_path = $isLocalhost 
-    ? "/PROJECTSS/PHP_PROJECT/customer/menu.php"
-    : "/customer/menu.php";
+// FIXED: Use actual project folder name for QR URLs
+$host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+$hostOnly = preg_replace('/:\\d+$/', '', $host);
+$isLocalhost = in_array($hostOnly, ['localhost', '127.0.0.1'], true);
+$protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https://' : 'http://';
+$projectFolder = 'Restaurant-Management-Using-QR-code-Using-PHP-';
+$base_path = "/" . $projectFolder . "/customer/menu.php";
 
-$menu_url = $protocol . $_SERVER['HTTP_HOST'] . $base_path . "?restaurant=" . $restaurant_id;
+$menu_url = $protocol . $host . $base_path . "?restaurant=" . $restaurant_id;
+
+// Debug: Show generated URL
+$debugURL = $menu_url . "&table=1";
 
 // Create qrcodes directory if it doesn't exist
 $qrCodeDir = "../assets/qrcodes/";
@@ -27,13 +45,38 @@ if (!file_exists($qrCodeDir)) {
     mkdir($qrCodeDir, 0755, true);
 }
 
-// Generate and save main QR code
+// Generate and save main QR code (skip if already exists unless forced)
+$forceRegen = isset($_GET['regen']) && $_GET['regen'] === '1';
 $filename = "restaurant_{$restaurant_id}_qrcode.png";
-$qrCodeImage = generateQRCode($menu_url);
-if ($qrCodeImage) {
-    file_put_contents($qrCodeDir . $filename, $qrCodeImage);
-} else {
-    $error = "Failed to generate QR code";
+$mainPath = $qrCodeDir . $filename;
+if ($forceRegen || !file_exists($mainPath)) {
+    $qrCodeImage = generateQRCode($menu_url);
+    if ($qrCodeImage) {
+        file_put_contents($mainPath, $qrCodeImage);
+    } else {
+        $error = "Failed to generate QR code";
+    }
+}
+
+// Generate individual table QR codes (skip if already exists unless forced)
+$tableQRCodes = [];
+for ($table_no = 1; $table_no <= 10; $table_no++) {
+    $table_url = $menu_url . "&table=" . $table_no;
+    $table_filename = "restaurant_{$restaurant_id}_table_{$table_no}_qrcode.png";
+    $tablePath = $qrCodeDir . $table_filename;
+
+    if ($forceRegen || !file_exists($tablePath)) {
+        $tableQRImage = generateQRCode($table_url);
+        if ($tableQRImage) {
+            file_put_contents($tablePath, $tableQRImage);
+        }
+    }
+
+    $tableQRCodes[$table_no] = [
+        'filename' => $table_filename,
+        'url' => $table_url,
+        'exists' => file_exists($tablePath)
+    ];
 }
 
 // Get all existing QR codes
@@ -424,6 +467,98 @@ $existingQRCodes = glob($qrCodeDir . "*.png");
             border: 1px solid var(--light-gray);
         }
 
+        .url-display-small {
+            width: 100%;
+            background: var(--light);
+            padding: 0.5rem;
+            border-radius: var(--border-radius-sm);
+            font-family: monospace;
+            font-size: 0.7rem;
+            word-break: break-all;
+            margin-top: 0.5rem;
+            border: 1px solid var(--light-gray);
+            color: var(--gray);
+        }
+
+        /* QR Card */
+        .qr-card {
+            background: white;
+            border-radius: var(--border-radius);
+            padding: 1.5rem;
+            box-shadow: var(--shadow);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1rem;
+            transition: var(--transition);
+            border: 2px solid transparent;
+            text-align: center;
+        }
+
+        .qr-card:hover {
+            box-shadow: var(--shadow-lg);
+            transform: translateY(-5px);
+            border-color: var(--primary);
+        }
+
+        .qr-card-header {
+            width: 100%;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid var(--light-gray);
+        }
+
+        .qr-card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--secondary);
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+        }
+
+        .qr-card-image {
+            width: 180px;
+            height: 180px;
+            object-fit: contain;
+            background: var(--light);
+            padding: 0.75rem;
+            border: 2px dashed var(--primary-light);
+            border-radius: var(--border-radius-sm);
+            transition: var(--transition);
+        }
+
+        .qr-card:hover .qr-card-image {
+            transform: scale(1.05);
+        }
+
+        .btn-group-vertical {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            width: 100%;
+        }
+
+        .qr-error {
+            width: 100%;
+            height: 180px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(231, 111, 81, 0.1);
+            border: 2px dashed var(--error);
+            border-radius: var(--border-radius-sm);
+            color: var(--error);
+            font-size: 0.875rem;
+        }
+
+        .qr-error i {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+
         /* Empty State */
         .empty-state {
             display: flex;
@@ -561,12 +696,33 @@ $existingQRCodes = glob($qrCodeDir . "*.png");
         <div class="alert alert-info animate-fade-in">
             <i class="fas fa-info-circle"></i>
             <div>
-                <strong>Usage Instructions</strong>
-                <p>Generate QR codes that link directly to your digital menu. These codes can be printed and placed on tables or at your entrance.</p>
+                <strong>Current QR URL:</strong> <?= htmlspecialchars($debugURL) ?><br>
+                <strong>Usage:</strong> Generate QR codes that link directly to your digital menu. These codes can be printed and placed on tables or at your entrance.<br>
+                <strong>⚠️ If URLs are wrong:</strong> Click "Delete Old & Regenerate All QR Codes" button below.
+            </div>
+        </div>
+        
+        <!-- Regenerate Button -->
+        <div class="alert alert-info animate-fade-in" style="background: #fff3cd; border-left-color: #ffc107;">
+            <i class="fas fa-exclamation-triangle" style="color: #ffc107;"></i>
+            <div>
+                <strong>Fix Wrong QR URLs:</strong><br>
+                If your QR codes have wrong URLs (like PROJECTSS/PHP_PROJECT), click this button to delete old QR codes and generate new ones with correct URLs.
+                <br><br>
+                <a href="?delete_old_qrs=1" onclick="return confirm('Delete all existing QR codes and regenerate them? This cannot be undone.');" class="btn btn-primary" style="background: #ffc107; color: #000;">
+                    <i class="fas fa-sync-alt"></i> Delete Old & Regenerate All QR Codes
+                </a>
             </div>
         </div>
 
         <!-- Success/Error Messages -->
+        <?php if (isset($_GET['deleted_count'])): ?>
+            <div class="alert alert-success animate-fade-in">
+                <i class="fas fa-check-circle"></i>
+                <div>Successfully deleted <?= (int)$_GET['deleted_count'] ?> old QR code(s). Page will regenerate new QR codes automatically.</div>
+            </div>
+        <?php endif; ?>
+        
         <?php if (isset($_GET['deleted'])): ?>
             <div class="alert alert-success animate-fade-in">
                 <i class="fas fa-check-circle"></i>
@@ -614,6 +770,55 @@ $existingQRCodes = glob($qrCodeDir . "*.png");
                         <p>QR code not generated yet. Please try again.</p>
                     </div>
                 <?php endif; ?>
+            </div>
+        </div>
+
+        <!-- Table QR Codes Card -->
+        <div class="dashboard-card animate-fade-in">
+            <div class="card-header">
+                <h2 class="card-title">
+                    <i class="fas fa-table"></i> Table-Specific QR Codes
+                </h2>
+                <div class="btn-group">
+                    <button onclick="window.print()" class="btn btn-outline">
+                        <i class="fas fa-print"></i> Print All Tables
+                    </button>
+                </div>
+            </div>
+            
+            <p>Print these QR codes and place them on each table. When customers scan a table QR code, their order will be automatically associated with that table number.</p>
+            
+            <div class="qr-grid">
+                <?php for ($table_no = 1; $table_no <= 10; $table_no++): 
+                    $qr = $tableQRCodes[$table_no];
+                    $qrExists = file_exists($qrCodeDir . $qr['filename']);
+                ?>
+                    <div class="qr-card">
+                        <div class="qr-card-header">
+                            <h3 class="qr-card-title">
+                                <i class="fas fa-chair"></i> Table <?php echo $table_no; ?>
+                            </h3>
+                        </div>
+                        
+                        <?php if ($qrExists): ?>
+                            <img src="../assets/qrcodes/<?php echo $qr['filename']; ?>?t=<?php echo time(); ?>" alt="Table <?php echo $table_no; ?> QR Code" class="qr-card-image">
+                            <div class="btn-group-vertical">
+                                <a href="../assets/qrcodes/<?php echo $qr['filename']; ?>" download class="btn btn-primary btn-sm">
+                                    <i class="fas fa-download"></i> Download
+                                </a>
+                                <button onclick="copyToClipboard('table-url-<?php echo $table_no; ?>')" class="btn btn-outline btn-sm">
+                                    <i class="fas fa-link"></i> Copy URL
+                                </button>
+                            </div>
+                            <div class="url-display-small" id="table-url-<?php echo $table_no; ?>"><?php echo htmlspecialchars($qr['url']); ?></div>
+                        <?php else: ?>
+                            <div class="qr-error">
+                                <i class="fas fa-exclamation-triangle"></i>
+                                <p>Failed to generate</p>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+                <?php endfor; ?>
             </div>
         </div>
 

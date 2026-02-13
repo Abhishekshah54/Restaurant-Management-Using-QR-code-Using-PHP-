@@ -33,16 +33,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_table'])) {
 if (isset($_GET['delete_id'])) {
     $table_id = (int)$_GET['delete_id'];
     
-    // Check if table exists and belongs to this restaurant
-    $stmt = $pdo->prepare("SELECT id FROM restaurant_tables 
+    // Check if table exists and belongs to this restaurant, and get table_no for QR file deletion
+    $stmt = $pdo->prepare("SELECT id, table_no FROM restaurant_tables 
                           WHERE id = ? AND restaurant_id = ?");
     $stmt->execute([$table_id, $_SESSION['user_id']]);
     
     if ($stmt->rowCount() > 0) {
-        // Delete the table
+        $table = $stmt->fetch(PDO::FETCH_ASSOC);
+        
+        // Delete the table from database
         $stmt = $pdo->prepare("DELETE FROM restaurant_tables 
                               WHERE id = ? AND restaurant_id = ?");
         $stmt->execute([$table_id, $_SESSION['user_id']]);
+        
+        // Delete the corresponding QR code file
+        $qrFilename = "restaurant_{$_SESSION['user_id']}_table_{$table['table_no']}_qrcode.png";
+        $qrFilePath = "../assets/qrcodes/" . $qrFilename;
+        if (file_exists($qrFilePath)) {
+            unlink($qrFilePath);
+        }
+        
         header("Location: tables.php?deleted=1");
         exit();
     } else {
