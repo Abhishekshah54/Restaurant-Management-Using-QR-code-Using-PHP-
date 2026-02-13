@@ -2,75 +2,101 @@
 require_once '../includes/auth.php';
 require_once '../config/db.php';
 
-// Update order status via AJAX
+// Debug: Log POST data
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    header('Content-Type: application/json; charset=utf-8');
-    
-    if (isset($_POST['update_status']) && isset($_POST['order_id']) && isset($_POST['status'])) {
-        $status = trim($_POST['status']);
-        $orderId = (int)$_POST['order_id'];
-        $restaurantId = $_SESSION['user_id'] ?? 0;
+    error_log("POST Data: " . print_r($_POST, true));
+}
 
+// Handle status update via POST
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
+    $orderId = filter_var($_POST['order_id'], FILTER_VALIDATE_INT);
+    $status = trim($_POST['status']);
+    $restaurantId = $_SESSION['user_id'] ?? 0;
+    
+    error_log("Attempting to update Order #$orderId to status: $status for restaurant: $restaurantId");
+    
+    // Validate
+    $validStatuses = ['Pending', 'Preparing', 'Ready', 'Delivered', 'Paid', 'Cancelled'];
+    
+    if ($orderId && in_array($status, $validStatuses)) {
         try {
-            // First try simple update
             $stmt = $pdo->prepare("UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ? AND restaurant_id = ?");
             $result = $stmt->execute([$status, $orderId, $restaurantId]);
-
-            if ($result && $stmt->rowCount() > 0) {
-                echo json_encode(['success' => true, 'message' => 'Status updated successfully']);
+            $rowCount = $stmt->rowCount();
+            
+            error_log("Update result: " . ($result ? "SUCCESS" : "FAILED") . ", Rows affected: $rowCount");
+            
+            if ($result) {
+                // Redirect back with success message
+                header("Location: orders.php?updated=1&order_id=$orderId&status=$status");
                 exit;
             } else {
-                // If failed with Paid, try to add it to enum
-                if (strcasecmp($status, 'Paid') === 0) {
-                    try {
-                        $colStmt = $pdo->prepare("SHOW COLUMNS FROM orders WHERE Field = 'status'");
-                        $colStmt->execute();
-                        $colInfo = $colStmt->fetch(PDO::FETCH_ASSOC);
-
-                        if ($colInfo && strpos($colInfo['Type'], 'enum') !== false) {
-                            $pdo->exec("ALTER TABLE orders MODIFY status ENUM('Pending','Preparing','Ready','Delivered','Paid','Cancelled') NOT NULL DEFAULT 'Pending'");
-                            
-                            $stmt = $pdo->prepare("UPDATE orders SET status = ?, updated_at = NOW() WHERE id = ? AND restaurant_id = ?");
-                            $stmt->execute([$status, $orderId, $restaurantId]);
-                            
-                            echo json_encode(['success' => true, 'message' => 'Status updated successfully']);
-                            exit;
-                        }
-                    } catch (Exception $e) {
-                        // Continue to error response
-                    }
-                }
-                
-                echo json_encode(['success' => false, 'message' => 'No rows updated']);
-                exit;
+                error_log("Update failed - no rows affected");
+                $_SESSION['error'] = 'Failed to update status - order not found';
             }
         } catch (PDOException $e) {
-            echo json_encode(['success' => false, 'message' => 'Database error: ' . $e->getMessage()]);
+            error_log("Database error: " . $e->getMessage());
+            $_SESSION['error'] = 'Failed to update status: ' . $e->getMessage();
+        }
+    } else {
+        error_log("Validation failed - OrderID: $orderId, Status valid: " . (in_array($status, $validStatuses) ? 'YES' : 'NO'));
+        $_SESSION['error'] = 'Invalid order data';
+    }
+}
+
+// DELETE ORDER
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_order']) && isset($_POST['order_id'])) {
+    $orderId = filter_var($_POST['order_id'], FILTER_VALIDATE_INT);
+    $restaurantId = $_SESSION['user_id'] ?? 0;
+        
+        if (!$orderId || $orderId <= 0) {
+            echo json_encode([
+                'success' => false, 
+                'message' => 'Invalid order ID'
+            ]);
             exit;
         }
-    }
-    
-    // Delete order via AJAX
-    if (isset($_POST['delete_order']) && isset($_POST['order_id'])) {
-        $orderId = (int)$_POST['order_id'];
-        $restaurantId = $_SESSION['user_id'] ?? 0;
-
+        
         try {
-            // First delete order items
+            // Start transaction
+            $pdo->beginTransaction();
+            
+            // Delete order items first (foreign key constraint)
             $stmt = $pdo->prepare("DELETE FROM order_items WHERE order_id = ?");
             $stmt->execute([$orderId]);
             
-            // Then delete the order
-            $stmt = $pdo->prepare("DELETE FROM orders WHERE id = ? AND restaurant_id = ?");
+            // Delete the order
+            $stmt = $pdo->prepare("
+                DELETE FROM orders 
+                WHERE id = ? AND restaurant_id = ?
+            ");
             $result = $stmt->execute([$orderId, $restaurantId]);
             
-            if ($result) {
-                echo json_encode(['success' => true, 'message' => 'Order deleted successfully']);
+            // Commit transaction
+            $pdo->commit();
+            
+            if ($result && $stmt->rowCount() > 0) {
+                echo json_encode([
+                    'success' => true, 
+                    'message' => 'Order deleted successfully'
+                ]);
             } else {
-                echo json_encode(['success' => false, 'message' => 'Failed to delete order']);
+                echo json_encode([
+                    'success' => false, 
+                    'message' => 'Order not found'
+                ]);
             }
+            
         } catch (PDOException $e) {
-            echo json_encode(['success' => false, 'message' => 'Database error: ' . $e->getMessage()]);
+            // Rollback on error
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            error_log('Order Delete Error: ' . $e->getMessage());
+            echo json_encode([
+                'success' => false, 
+                'message' => 'Failed to delete order'
+            ]);
         }
         exit;
     }
@@ -671,6 +697,21 @@ $restaurant_name = $stmt->fetchColumn() ?? 'RestaurantPro';
                 </div>
             </div>
             
+            <?php if (isset($_GET['updated'])): ?>
+                <div class="success-message" style="padding: 15px 20px; background: #52b788; color: white; border-radius: 8px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+                    <i class="fas fa-check-circle" style="font-size: 20px;"></i>
+                    <span>Order #<?= htmlspecialchars($_GET['order_id'] ?? '') ?> status updated to <strong><?= htmlspecialchars($_GET['status'] ?? '') ?></strong></span>
+                </div>
+            <?php endif; ?>
+            
+            <?php if (isset($_SESSION['error'])): ?>
+                <div class="error-message" style="padding: 15px 20px; background: #e76f51; color: white; border-radius: 8px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+                    <i class="fas fa-exclamation-circle" style="font-size: 20px;"></i>
+                    <span><?= htmlspecialchars($_SESSION['error']) ?></span>
+                </div>
+                <?php unset($_SESSION['error']); ?>
+            <?php endif; ?>
+            
             <div class="card animate-fade-in delay-5">
                 <div class="card-header">
                     <h2 class="card-title">All Orders</h2>
@@ -710,9 +751,11 @@ $restaurant_name = $stmt->fetchColumn() ?? 'RestaurantPro';
                                 </td>
                                 <td><strong>₹<?= number_format($order['total_price'], 2) ?></strong></td>
                                 <td>
-                                    <div class="status-form">
+                                    <!-- Auto-submit form on status change -->
+                                    <form method="POST" action="" style="margin:0;" onchange="this.submit()">
+                                        <input type="hidden" name="update_status" value="1">
                                         <input type="hidden" name="order_id" value="<?= $order['id'] ?>">
-                                        <select name="status" class="status-select" onchange="updateOrderStatus(this, <?= $order['id'] ?>)">
+                                        <select name="status" class="status-select">
                                             <option value="Pending"   <?= $order['status'] == 'Pending' ? 'selected' : '' ?>>Pending</option>
                                             <option value="Preparing" <?= $order['status'] == 'Preparing' ? 'selected' : '' ?>>Preparing</option>
                                             <option value="Ready"     <?= $order['status'] == 'Ready' ? 'selected' : '' ?>>Ready</option>
@@ -720,7 +763,7 @@ $restaurant_name = $stmt->fetchColumn() ?? 'RestaurantPro';
                                             <option value="Paid"      <?= $order['status'] == 'Paid' ? 'selected' : '' ?>>Paid</option>
                                             <option value="Cancelled" <?= $order['status'] == 'Cancelled' ? 'selected' : '' ?>>Cancelled</option>
                                         </select>
-                                    </div>
+                                    </form>
                                 </td>
 
                                 <td>
@@ -774,76 +817,16 @@ $restaurant_name = $stmt->fetchColumn() ?? 'RestaurantPro';
     </div>
 
     <script>
-        // Function to update order status using XMLHttpRequest
-        function updateOrderStatus(selectElement, orderId) {
-            const status = selectElement.value;
-            const row = selectElement.closest('tr');
-            
-            // Store original value for potential rollback
-            const originalStatus = selectElement.getAttribute('data-original-status') || selectElement.value;
-            selectElement.setAttribute('data-original-status', originalStatus);
-            
-            // Show loading state
-            selectElement.disabled = true;
-            
-            // Create XMLHttpRequest
-            if (status.length === 0) {
-                selectElement.disabled = false;
-                return;
-            }
-
-            var xmlhttp = new XMLHttpRequest();
-            xmlhttp.onreadystatechange = function() {
-                if (this.readyState === 4) {
-                    selectElement.disabled = false;
-
-                    if (this.status === 200) {
-                        try {
-                            const responseText = this.responseText.trim();
-                            const data = JSON.parse(responseText);
-                            
-                            if (data.success) {
-                                // Update UI on success
-                                selectElement.setAttribute('data-original-status', status);
-                                row.setAttribute('data-status', status.toLowerCase());
-                                
-                                // Update statistics
-                                updateStatistics();
-                                
-                                // Show success notification
-                                showNotification('Status updated successfully', 'success');
-                            } else {
-                                // Revert on failure
-                                selectElement.value = originalStatus;
-                                showNotification('Failed to update status: ' + (data.message || 'Unknown error'), 'error');
-                            }
-                        } catch (e) {
-                            // Revert on parse error
-                            selectElement.value = originalStatus;
-                            console.error('Parse error:', e, 'Response:', this.responseText);
-                            showNotification('Error parsing response: ' + e.message, 'error');
-                        }
-                    } else {
-                        // Revert on HTTP error
-                        selectElement.value = originalStatus;
-                        console.error('HTTP Error:', this.status, this.responseText);
-                        showNotification('HTTP Error ' + this.status + ': ' + this.statusText, 'error');
-                    }
-                }
-            };
-            
-            xmlhttp.onerror = function() {
-                selectElement.disabled = false;
-                selectElement.value = originalStatus;
-                console.error('Network error');
-                showNotification('Network error occurred', 'error');
-            };
-            
-            // Send the request
-            xmlhttp.open("POST", "", true);
-            xmlhttp.setRequestHeader("Content-type", "application/x-www-form-urlencoded");
-            const sendData = "update_status=1&order_id=" + encodeURIComponent(orderId) + "&status=" + encodeURIComponent(status);
-            xmlhttp.send(sendData);
+        // Auto-hide success message after 3 seconds
+        const successMsg = document.querySelector('.success-message');
+        if (successMsg) {
+            setTimeout(function() {
+                successMsg.style.transition = 'opacity 0.5s';
+                successMsg.style.opacity = '0';
+                setTimeout(function() {
+                    successMsg.style.display = 'none';
+                }, 500);
+            }, 3000);
         }
 
         // Filter functionality

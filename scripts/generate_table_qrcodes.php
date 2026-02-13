@@ -10,6 +10,10 @@ function generateQRCode($text, $size = 300) {
 $restaurantId = 8;
 $protocol = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https://' : 'http://';
 $host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : 'localhost';
+// Force localhost without port for QR URLs
+if (strpos($host, 'localhost') === 0) {
+    $host = 'localhost';
+}
 
 // Allow manual override via environment variable
 $baseOverride = getenv('QR_BASE_URL');

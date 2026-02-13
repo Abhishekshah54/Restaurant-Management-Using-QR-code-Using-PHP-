@@ -2,6 +2,20 @@
 require_once '../includes/auth.php';
 require_once '../config/db.php';
 
+// Handle delete old QR codes request
+if (isset($_GET['delete_old_qrs'])) {
+    $qrCodeDir = "../assets/qrcodes/";
+    $files = glob($qrCodeDir . "*.png");
+    $deleted = 0;
+    foreach ($files as $file) {
+        if (unlink($file)) {
+            $deleted++;
+        }
+    }
+    header("Location: qr_generator.php?deleted_count=$deleted");
+    exit;
+}
+
 // QR code generation function
 function generateQRCode($text, $size = 300) {
     $url = "https://api.qrserver.com/v1/create-qr-code/?size={$size}x{$size}&data=" . urlencode($text);
@@ -12,25 +26,16 @@ function generateQRCode($text, $size = 300) {
 // Get restaurant ID from session
 $restaurant_id = $_SESSION['user_id'];
 
-// Detect environment and set appropriate base URL
-$protocol = isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https://' : 'http://';
-$host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : 'localhost';
-
-// Build base path dynamically from current script location
-$scriptName = isset($_SERVER['SCRIPT_NAME']) ? $_SERVER['SCRIPT_NAME'] : '';
-if ($scriptName === '' && isset($_SERVER['REQUEST_URI'])) {
-    $scriptName = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
-}
-$scriptDir = str_replace('\\', '/', dirname($scriptName));
-$scriptDir = rtrim($scriptDir, '/');
-if (substr($scriptDir, -6) === '/admin') {
-    $rootPath = substr($scriptDir, 0, -6);
-} else {
-    $rootPath = $scriptDir;
-}
-$base_path = ($rootPath ? $rootPath : '') . "/customer/menu.php";
+// FIXED: Use actual project folder name for QR URLs
+$protocol = 'http://';
+$host = 'localhost';
+$projectFolder = 'Restaurant-Management-Using-QR-code-Using-PHP-';
+$base_path = "/" . $projectFolder . "/customer/menu.php";
 
 $menu_url = $protocol . $host . $base_path . "?restaurant=" . $restaurant_id;
+
+// Debug: Show generated URL
+$debugURL = $menu_url . "&table=1";
 
 // Create qrcodes directory if it doesn't exist
 $qrCodeDir = "../assets/qrcodes/";
