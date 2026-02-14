@@ -104,7 +104,8 @@ $restaurant_name = $stmt->fetchColumn() ?? 'RestaurantPro';
 
 // Get table data for editing if requested
 $edit_table = null;
-if (isset($_GET['edit_id'])) {
+$edit_table_requested = isset($_GET['edit_id']);
+if ($edit_table_requested) {
     $table_id = (int)$_GET['edit_id'];
     $stmt = $pdo->prepare("SELECT * FROM restaurant_tables 
                           WHERE id = ? AND restaurant_id = ?");
@@ -680,6 +681,11 @@ if (isset($_GET['edit_id'])) {
                 <i class="fas fa-exclamation-circle"></i> Table not found or you don't have permission to modify it!
             </div>
             <?php endif; ?>
+            <?php if ($edit_table_requested && !$edit_table): ?>
+            <div class="alert error animate-fade-in">
+                <i class="fas fa-exclamation-circle"></i> Unable to load the selected table for editing.
+            </div>
+            <?php endif; ?>
             
             <!-- Add Table Form (Initially Hidden) -->
             <div class="card animate-fade-in delay-2" id="addTableForm" style="display: none;">
@@ -738,7 +744,7 @@ if (isset($_GET['edit_id'])) {
                             <h3>Table <?= htmlspecialchars($table['table_no']) ?></h3>
                             <span class="table-status"><?= ucfirst(str_replace('_', ' ', $actual_status)) ?></span>
                             <div class="table-actions">
-                                <a href="tables.php?edit_id=<?= $table['id'] ?>" class="btn btn-outline btn-sm">
+                                <a href="tables.php?edit_id=<?= $table['id'] ?>#editTableForm" class="btn btn-outline btn-sm">
                                     <i class="fas fa-edit"></i> Edit
                                 </a>
                                 <a href="tables.php?delete_id=<?= $table['id'] ?>" class="btn btn-danger btn-sm" onclick="return confirm('Are you sure you want to delete this table?')">
@@ -759,7 +765,7 @@ if (isset($_GET['edit_id'])) {
             
             <!-- Edit Table Form (if editing) -->
             <?php if ($edit_table): ?>
-            <div class="card animate-fade-in delay-4">
+            <div class="card animate-fade-in delay-4" id="editTableForm">
                 <div class="card-header">
                     <h2 class="card-title">
                         <i class="fas fa-edit"></i> Edit Table
@@ -813,6 +819,12 @@ if (isset($_GET['edit_id'])) {
             addTableForm.style.display = 'none';
             showAddForm.style.display = 'inline-block';
         });
+
+        // Auto-scroll to edit form when present
+        const editTableForm = document.getElementById('editTableForm');
+        if (editTableForm) {
+            editTableForm.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
 
         // Animate elements when they come into view
         document.addEventListener('DOMContentLoaded', function() {

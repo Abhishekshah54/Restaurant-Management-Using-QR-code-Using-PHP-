@@ -27,9 +27,9 @@ function generateQRCode($text, $size = 300) {
 $restaurant_id = $_SESSION['user_id'];
 
 // FIXED: Use actual project folder name for QR URLs
-$host = $_SERVER['HTTP_HOST'] ?? 'localhost';
+$host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : 'localhost';
 $hostOnly = preg_replace('/:\\d+$/', '', $host);
-$isLocalhost = in_array($hostOnly, ['localhost', '127.0.0.1'], true);
+$isLocalhost = in_array($hostOnly, array('localhost', '127.0.0.1'), true);
 $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https://' : 'http://';
 $projectFolder = 'Restaurant-Management-Using-QR-code-Using-PHP-';
 $base_path = "/" . $projectFolder . "/customer/menu.php";

@@ -100,21 +100,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_order']) && is
         }
         exit;
     }
-
-// Get all orders
-$stmt = $pdo->prepare("
-    SELECT o.*, 
-           GROUP_CONCAT(m.name SEPARATOR ', ') AS items,
-           SUM(oi.quantity) AS total_items
-    FROM orders o
-    JOIN order_items oi ON o.id = oi.order_id
-    JOIN menu_items m ON oi.menu_item_id = m.id
-    WHERE o.restaurant_id = ?
-    GROUP BY o.id
-    ORDER BY o.created_at DESC
-");
-$stmt->execute([$_SESSION['user_id']]);
-$orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Get all orders
+    $stmt = $pdo->prepare("
+        SELECT o.*, 
+            GROUP_CONCAT(m.name SEPARATOR ', ') AS items,
+            SUM(oi.quantity) AS total_items
+        FROM orders o
+        JOIN order_items oi ON o.id = oi.order_id
+        JOIN menu_items m ON oi.menu_item_id = m.id
+        WHERE o.restaurant_id = ?
+        GROUP BY o.id
+        ORDER BY o.created_at DESC
+    ");
+    $stmt->execute([$_SESSION['user_id']]);
+    $orders = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Get restaurant name for sidebar
 $stmt = $pdo->prepare("SELECT restaurant_name FROM users WHERE id = ?");
